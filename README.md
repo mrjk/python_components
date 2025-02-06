@@ -15,6 +15,9 @@ Other projects:
 * [superconf](https://github.com/mrjk/python-superconf)
     * Manage complex and deep datastructure with ease
 
+* [python_snippets](https://github.com/mrjk/python_snippets)
+    * Reusable python code snippets
+
 Other forks:
 
 * [Expandvars](https://github.com/mrjk/expandvars)
