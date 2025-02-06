@@ -1,0 +1,8 @@
+# From upstream
+# expandvars==0.12.0
+
+# Forked version with bugfixes
+expandvars @ git+https://github.com/mrjk/expandvars@develop
+
+# Manual install
+# pip install git+https://github.com/mrjk/expandvars.git@develop
