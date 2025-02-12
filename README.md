@@ -7,6 +7,11 @@ List of componenents:
     * Support variables scopes and sources
     * Support reccursive templating
 
+* expandvars:
+    * Shell var parser in python, fork of: 
+    * Rewriten with classes, in way to fix bug and add few features
+
+
 Other projects:
 
 * [clak](https://github.com/mrjk/python-clak)
