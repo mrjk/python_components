@@ -329,6 +329,8 @@ class StoreManager:
             VarMgrAppError: If the specified source doesn't exist.
         """
 
+        assert isinstance(dataset, dict), f"Dataset must be a dict, not: {type(dataset)}"
+
         source = self._sources.get(source_name, None)
         if source is None:
             raise VarMgrAppError(
@@ -342,6 +344,20 @@ class StoreManager:
             meta=kwargs,
         )
 
+    def get_layer(self, source_name: str) -> Layer:
+        """Get a layer by source name.
+
+        Args:
+            source_name: Name of the source to get the layer for.
+
+        Returns:
+            Layer object containing the source's data and metadata.
+
+        Raises:
+            KeyError: If the specified source doesn't exist.
+        """
+        return self.layered_store[source_name].payload
+    
     def get_ordered_layers(self, scope: Optional[str] = None) -> List[Layer]:
         """Retrieve layers in priority order, optionally filtered by scope.
 
@@ -473,9 +489,13 @@ class StoreManager:
         Raises:
             KeyError: If the specified scope doesn't exist.
         """
+        from pprint import pprint
         out = {}
         order = self.get_ordered_layers(scope=scope)
+        print("ORDER:", order)
         for layer in order:
+            print("LAYER:", layer)
+            pprint(layer.__dict__)
             for key, val in layer.payload.items():
                 if key not in out:
                     out[key] = val

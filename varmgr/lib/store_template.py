@@ -193,7 +193,7 @@ class LazyQueryDict(LazyDict):
         report = report or {}
         _queryctl = self._queryctl
 
-        print("RECURSIVE QUERY", key)
+        logger.debug("Recursive query level %s: %s", _queryctl.lvl, key)
 
         # Ensure not circular
         _queryctl.is_not_circular()
@@ -385,7 +385,7 @@ class Renderer:
         settings = _queryctl.settings
         # _report = _queryctl.report
         _report = report or {}
-        print("\n\nRENDER_VAR_PROCESS", var_name)
+        # print("\n\nRENDER_VAR_PROCESS", var_name)
 
         # 1. Fetch and process variable
         try:
