@@ -145,7 +145,7 @@ class Layer:
         self.meta = meta
 
     def __repr__(self) -> str:
-        return f"Layer({self.source.name})"
+        return f"Layer({self.source.name}, {len(self.payload)} vars)"
 
 
 class StoreManager:
@@ -182,7 +182,7 @@ class StoreManager:
         if isinstance(args, list):
             for source in args:
                 assert isinstance(source, Source)
-                self._sources[source.name] = source
+                self.add_sources(source, force=force)
         elif isinstance(args, Source):
             if args.name in self._sources and not force:
                 raise AlreadyExistingSourceError(
@@ -192,7 +192,7 @@ class StoreManager:
                 )
             self._sources[args.name] = args
         else:
-            raise ValueError(f"Invalid number of arguments: {len(args)}")
+            raise ValueError(f"Invalid arguments type: {type(args)}")
 
     def set_scopes(self, *args: Union[Dict[str, List[str]], str, List[str]]) -> None:
         """Define scopes for variable resolution.
@@ -356,8 +356,8 @@ class StoreManager:
         Raises:
             KeyError: If the specified source doesn't exist.
         """
-        return self.layered_store[source_name].payload
-    
+        return self.layered_store[source_name]
+
     def get_ordered_layers(self, scope: Optional[str] = None) -> List[Layer]:
         """Retrieve layers in priority order, optionally filtered by scope.
 
@@ -489,16 +489,9 @@ class StoreManager:
         Raises:
             KeyError: If the specified scope doesn't exist.
         """
-        from pprint import pprint
         out = {}
-        order = self.get_ordered_layers(scope=scope)
-        print("ORDER:", order)
-        for layer in order:
-            print("LAYER:", layer)
-            pprint(layer.__dict__)
+        for layer in self.get_ordered_layers(scope=scope):
             for key, val in layer.payload.items():
                 if key not in out:
                     out[key] = val
-                    # out[key] = self.get_value(key, scope=scope)
-                    # print(f"WARNING: {key} already exists in {layer.source.name}")
         return out

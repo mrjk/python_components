@@ -13,13 +13,11 @@ The module handles template parsing and variable substitution using shell-style
 variable expansion syntax. It supports both $VAR and ${VAR} formats, with 
 configurable variable symbols and strict mode.
 """
-from pprint import pprint
-
 import logging
 
 # pylint: disable=relative-beyond-top-level
 
-from .expandvars import ExpandParser, ExpandvarsException
+from expandvars import ExpandParser, ExpandvarsException
 
 from .core import _TemplateEngines, _TemplateInstances
 from .core_engine import InvalidTemplateVarNameError

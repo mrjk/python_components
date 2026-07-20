@@ -21,7 +21,6 @@ values.
 # from string import Template
 from typing import Any, Optional
 import logging
-from pprint import pprint
 from dataclasses import dataclass
 
 # from .common import
@@ -39,13 +38,13 @@ from .core_engine import (
 )
 
 logger = logging.getLogger(__name__)
-# try:
-#     old_value = value
-#     value = tpl.substitute(**env)
-#     if old_value != value:
-#         self.log.trace(
-#             f"Transformed template var {hint}: {old_value} => {value}"
-#         )
+
+DEFAULT_ENGINE = "expandvars"
+
+ENGINES = {
+    "expandvars": ExpandVarsEngine,
+    "py_stringtemplate": StringTemplateEngine,
+}
 
 
 # =====================================================================
@@ -193,20 +192,16 @@ class LazyQueryDict(LazyDict):
         report = report or {}
         _queryctl = self._queryctl
 
-        logger.debug("Recursive query level %s: %s", _queryctl.lvl, key)
 
         # Ensure not circular
         _queryctl.is_not_circular()
 
         assert _queryctl is not None, "QueryCtl is required"
-        _queryctl.lvl += 1
+        logger.debug("Recursive query level %s: %s", _queryctl.lvl + 1, key)
         ret = self.renderer.render_var(
             key,
-            # settings=self.settings,
-            # report=report,
             _parent_queryctl=_queryctl,
         )
-        _queryctl.lvl -= 1
 
         if self.settings.debug:
             _report = ret[1]
@@ -214,12 +209,6 @@ class LazyQueryDict(LazyDict):
 
         self._queryctl.seen.append(key)
         return ret
-
-
-ENGINES = {
-    "expandvars": ExpandVarsEngine,
-    "py_stringtemplate": StringTemplateEngine,
-}
 
 
 class Renderer:
@@ -231,21 +220,27 @@ class Renderer:
     Args:
         store: The variable store containing the values to render.
         scope: The scope name to limit variable resolution.
+        engine: Template engine name (`expandvars` or `py_stringtemplate`).
     """
 
     def __init__(self, store, scope: str, engine: str = None):
         self.store = store
         self.scope = scope
         self._cache = {}
+        self.engine_name = engine or DEFAULT_ENGINE
 
         self.sources = store.get_ordered_sources(scope=scope)
 
-        if engine:
-            self.engine = ENGINES[engine]()
-        else:
-            # WIP TO FIX
-            # self.engine = ENGINES["py_stringtemplate"]()
-            self.engine = ENGINES["expandvars"]()
+        if self.engine_name not in ENGINES:
+            raise ValueError(
+                f"Unknown template engine '{self.engine_name}'. "
+                f"Expected one of: {', '.join(sorted(ENGINES))}"
+            )
+        self.engine = ENGINES[self.engine_name]()
+
+    def clear_cache(self) -> None:
+        """Clear cached rendered values."""
+        self._cache.clear()
 
     def render_values(self, **kwargs):
         """Get all variables and their rendered values.
@@ -346,7 +341,7 @@ class Renderer:
         debug = _queryctl.settings.debug
         cache = _queryctl.settings.cache
 
-        logger.info("Renderer: Rendering var%d: %s", _queryctl.lvl, var_name)
+        logger.info("Renderer: Rendering var level %d: %s", _queryctl.lvl, var_name)
 
         # 3. Check cache
         if cache and var_name in self._cache:
@@ -445,34 +440,39 @@ class Renderer:
 
 # pylint: disable=too-few-public-methods
 class RenderableStoreManager(StoreManager):
-    """
-    A class to manage variables and their sources.
-    """
+    """Store manager with optional template rendering via Renderer."""
 
     def __init__(self):
         self._renderer_cache = {}
 
         super().__init__()
 
-    def get_renderer(self, scope_name: Optional[str] = None) -> Renderer:
+    def set_layer(self, source_name: str, dataset, **kwargs) -> None:
+        """Set a layer and invalidate renderer caches so renders stay fresh."""
+        super().set_layer(source_name, dataset, **kwargs)
+        self.clear_renderer_caches()
+
+    def clear_renderer_caches(self) -> None:
+        """Clear render caches for all cached Renderer instances."""
+        for renderer in self._renderer_cache.values():
+            renderer.clear_cache()
+
+    def get_renderer(
+        self, scope_name: Optional[str] = None, engine: Optional[str] = None
+    ) -> Renderer:
         """Get or create a Renderer instance for the given scope.
 
         Args:
-            scope_name (Optional[str], optional): The scope name to get a renderer for.
-                If None, uses the default scope. Defaults to None.
+            scope_name: Scope to resolve variables in. If None, uses all sources.
+            engine: Template engine name. Defaults to expandvars. Ignored if a
+                renderer for this scope already exists in cache.
 
         Returns:
-            Renderer: A Renderer instance configured for the specified scope.
-                The same instance will be returned for subsequent calls with the same scope.
+            Renderer configured for the specified scope.
         """
-
-        # scope_name = scope_name or "default"
-
-        # Return from cache
-        if scope_name and scope_name in self._renderer_cache:
+        if scope_name in self._renderer_cache:
             return self._renderer_cache[scope_name]
 
-        # Create and save object
-        renderer = Renderer(store=self, scope=scope_name)
+        renderer = Renderer(store=self, scope=scope_name, engine=engine)
         self._renderer_cache[scope_name] = renderer
         return renderer

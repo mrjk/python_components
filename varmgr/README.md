@@ -1,46 +1,45 @@
 # Variable Manager (varmgr)
 
-A powerful and flexible variable management system that provides hierarchical configuration management with scoping, layering, and variable resolution capabilities.
+Hierarchical configuration management with scoping, layering, and optional shell-style template resolution.
 
 
 ## Table of Contents
 
 - [Goal](#goal)
 - [Technical Implementation Overview](#technical-implementation-overview)
-- [Core Concepts](#core-concepts)
+    - [Core Concepts](#core-concepts)
     - [1. Sources](#1-sources)
     - [2. Scopes](#2-scopes)
     - [3. Variable Resolution](#3-variable-resolution)
+- [Requirements](#requirements)
 - [Quickstart](#quickstart)
 - [Basic Usage](#basic-usage)
 - [Template Variables](#template-variables)
 - [Working with Multiple Scopes](#working-with-multiple-scopes)
 - [Debugging and Inspection](#debugging-and-inspection)
 - [Advanced Variable Usage](#advanced-variable-usage)
-    - [1. Variable Combinations and Nesting](#1-variable-combinations-and-nesting)
-    - [2. Special Characters and Edge Cases](#2-special-characters-and-edge-cases)
 - [Common Exceptions and Error Cases](#common-exceptions-and-error-cases)
-    - [1. Circular References](#1-circular-references)
-    - [2. Undefined Variables](#2-undefined-variables)
-    - [3. Malformed Templates](#3-malformed-templates)
 
 
 ## Goal
 
-The Variable Manager solves the common problem of managing configuration variables across different scopes and layers in complex applications. It addresses several key challenges:
+varmgr manages configuration variables across scopes and layers:
 
-- Managing configuration variables across different scopes (application, project, stack)
-- Handling variable overrides and fallbacks in a predictable way
-- Supporting variable resolution with dependencies
-- Providing a clear hierarchy for configuration sources
-- Enabling flexible configuration through multiple sources (CLI, environment, config files, etc.)
+- Scopes with inheritance (application → project → stack)
+- Predictable overrides and fallbacks by source priority
+- Optional recursive template resolution (`${var}` / `$var`)
+- Multiple sources (CLI, environment, config files, defaults, …)
+
 
 ## Requirements
 
-* Python 3.11
-* expandvars:
-    * Fork: `pip install git+https://github.com/mrjk/expandvars.git@develop`
-    * Contains some bugfixes and more options
+* Python 3.11+
+* [expandvars](https://github.com/mrjk/python-expandvars) fork (`develop` branch) for template rendering:
+
+```bash
+pip install git+https://github.com/mrjk/python-expandvars.git@develop
+```
+
 
 ## Technical Implementation Overview
 
@@ -48,12 +47,8 @@ The Variable Manager solves the common problem of managing configuration variabl
 
 #### 1. Sources
 
-Sources represent different configuration origins with assigned priority levels. Each source has:
-- A unique name (e.g., `app_cli`, `project_env`)
-- A priority level (lower numbers = higher priority)
-- Optional help text describing its purpose
+Sources are named config origins with an optional priority `level` (lower = higher priority).
 
-Example source definition:
 ```python
 Source("app_cli", level=300, help="Application main CLI")
 Source("app_env", level=300, help="Application environment variables")
@@ -62,20 +57,19 @@ Source("app_defaults", level=999, help="Application defaults")
 
 #### 2. Scopes
 
-Scopes define hierarchical configuration contexts that can inherit from each other. The system supports three main scopes:
+Scopes list sources (and other scopes) to resolve against. Typical layout:
 
-- `scope_app`: Application-level configuration
-- `scope_project`: Project-level configuration (inherits from app)
-- `scope_stack`: Stack-level configuration (inherits from project)
-
-Each scope can access variables from its own sources and inherited scopes.
+- `scope_app` — application sources
+- `scope_project` — project sources, then inherit `scope_app`
+- `scope_stack` — stack sources, then inherit `scope_project`
 
 #### 3. Variable Resolution
 
-The system provides two main implementations:
+Two APIs:
 
-1. `StoreManager`: Basic variable resolution with scope inheritance
-2. `RenderableStoreManager`: Advanced variable resolution supporting template variables (e.g., `${var_name}`)
+1. **`StoreManager`** — raw storage: `get_value` / `get_values` return stored values as-is (templates are **not** expanded).
+2. **`RenderableStoreManager`** — same raw API, plus `get_renderer(scope).render_var(...)` / `render_values(...)` for expansion.
+
 
 ## Quickstart
 
@@ -84,213 +78,178 @@ The system provides two main implementations:
 ```python
 from lib.store import StoreManager, Source
 
-# Create a variable manager instance
 varmgr = StoreManager()
 
-# Define and add sources
 varmgr.add_sources([
     Source("app_cli", level=300, help="Application main CLI"),
     Source("app_env", level=300, help="Application environment variables"),
     Source("app_defaults", level=999, help="Application defaults"),
 ])
 
-# Define scopes and their inheritance
 varmgr.set_scopes({
     "scope_app": ["app_cli", "app_env", "app_defaults"],
     "scope_project": [
         "project_cli",
         "project_env",
         "project_defaults",
-        "scope_app",  # Inherit from app scope
+        "scope_app",
     ],
 })
 
-# Set configuration values
-app_config = {
+varmgr.set_layer("app_cli", {
     "app_name": "myapp",
-    "debug": True
-}
-varmgr.set_layer("app_cli", app_config)
+    "debug": True,
+})
 
-# Get values
-app_name = varmgr.get_value("app_name")  # Returns "myapp"
+app_name = varmgr.get_value("app_name")  # "myapp"
 ```
 
 ### Template Variables
 
-Using the `RenderableStoreManager` for variable interpolation:
+`get_value` always returns the **raw** stored value. Use a `Renderer` to expand templates.
 
 ```python
-from lib.store_template import RenderableStoreManager
+from lib.store import RenderableStoreManager, Source
 
-# Create a renderable store manager
 varmgr = RenderableStoreManager()
 
-# Set up sources and scopes (same as basic usage)
-# ...
+# ... add_sources / set_scopes as above ...
 
-# Set values with templates
-config = {
+varmgr.set_layer("project_env", {
     "project_name": "myproject",
     "env": "prod",
-    "stack_name": "${project_name}-${env}"  # Will resolve to "myproject-prod"
-}
+    "stack_name": "${project_name}-${env}",
+})
 
-varmgr.set_layer("project_env", config)
+# Raw (not expanded)
+assert varmgr.get_value("stack_name") == "${project_name}-${env}"
 
-# Get rendered values
-stack_name = varmgr.get_value("stack_name")  # Returns "myproject-prod"
+# Rendered
+renderer = varmgr.get_renderer(scope_name="scope_project")
+assert renderer.render_var("stack_name") == "myproject-prod"
+
+# Render all variables in a scope
+values = renderer.render_values()
+```
+
+Default template engine is **expandvars** (shell-style `$VAR` / `${VAR}`). You can select the alternate Python `string.Template` engine:
+
+```python
+renderer = varmgr.get_renderer(scope_name="scope_project", engine="py_stringtemplate")
 ```
 
 ### Working with Multiple Scopes
 
 ```python
-# Set values in different scopes
-app_vars = {
+varmgr.set_layer("app_defaults", {
     "log_level": "INFO",
-    "app_name": "myapp"
-}
-project_vars = {
+    "app_name": "myapp",
+})
+varmgr.set_layer("project_env", {
     "project_id": "proj-123",
-    "log_level": "DEBUG"  # Override app's log_level
-}
+    "log_level": "DEBUG",
+})
 
-varmgr.set_layer("app_defaults", app_vars)
-varmgr.set_layer("project_env", project_vars)
+# Raw lookups respect scope priority
+varmgr.get_value("log_level", scope="scope_app")      # "INFO"
+varmgr.get_value("log_level", scope="scope_project")  # "DEBUG"
 
-# Get values from different scopes
-app_log_level = varmgr.get_value("log_level", scope="scope_app")     # Returns "INFO"
-proj_log_level = varmgr.get_value("log_level", scope="scope_project") # Returns "DEBUG"
-
-# Get all values in a scope
+# Merged raw values for a scope (templates not expanded)
 project_values = varmgr.get_values(scope="scope_project")
-# Returns merged values from project and app scopes
 ```
 
 ### Debugging and Inspection
 
 ```python
-# Show available sources and their help text
 varmgr.show_sources_help()
 
-# Inspect variable resolution
-var_info = varmgr.inspect_var("log_level", scope="scope_project")
+# Layers that define a variable, highest priority first
+layers = varmgr.inspect_var("log_level", scope="scope_project")
 
-# Get all source names for a scope
 sources = varmgr.get_source_names(scope="scope_stack")
+
+# Render with debug metadata
+value, report = renderer.render_var("stack_name", debug=True)
 ```
 
 ### Advanced Variable Usage
 
-#### 1. Variable Combinations and Nesting
-
-Variables can be combined and nested to create complex configurations:
+#### 1. Combinations and nesting
 
 ```python
-# Basic variable references
 config = {
     "project_name": "myproject",
     "env": "prod",
-    "stack_name": "${project_name}-${env}"  # Results in "myproject-prod"
+    "stack_name": "${project_name}-${env}",  # -> "myproject-prod"
 }
 
-# Nested references
 config = {
     "base_name": "app",
     "version": "v1",
     "env": "prod",
     "name_with_version": "${base_name}-${version}",
-    "full_name": "${name_with_version}-${env}"  # Results in "app-v1-prod"
-}
-
-# Multiple references to same variable
-config = {
-    "prefix": "svc",
-    "double_prefix": "${prefix}-${prefix}",  # Results in "svc-svc"
-    "with_suffix": "${prefix}-main-${prefix}"  # Results in "svc-main-svc"
+    "full_name": "${name_with_version}-${env}",  # -> "app-v1-prod"
 }
 ```
 
-#### 2. Special Characters and Edge Cases
+Expand with `renderer.render_var("full_name")` (not `get_value`).
 
-The system handles various special characters and edge cases:
+#### 2. Special characters
 
 ```python
 config = {
-    # Special characters are preserved
     "special_chars": "!@#$%^&*()",
-    "with_special": "${special_chars}_suffix",  # Results in "!@#$%^&*()_suffix"
-    
-    # URLs and paths
+    "with_special": "${special_chars}_suffix",
     "url": "https://example.com",
     "path": "/path/to/file",
-    "endpoint": "${url}${path}",  # Results in "https://example.com/path/to/file"
-    
-    # Whitespace handling
-    "padded": "  ${url}  ",  # Preserves spaces: "  https://example.com  "
-    
-    # Unicode and emojis
-    "unicode": "™®©",
-    "emoji": "🌟🚀🎉",
-    "combined": "${unicode}${emoji}"  # Results in "™®©🌟🚀🎉"
+    "endpoint": "${url}${path}",
 }
 ```
 
-### Common Exceptions and Error Cases
 
-#### 1. Circular References
+## Common Exceptions and Error Cases
 
-The system detects and prevents circular variable references:
+### 1. Circular References
 
 ```python
-# This will raise TemplateRenderingCircularValueError
 config = {
     "var1": "${var2}",
-    "var2": "${var1}"  # Circular reference!
+    "var2": "${var1}",
 }
 
-# More complex circular reference with 4 variables
-config = {
-    "var1": "${var2}_a",
-    "var2": "${var3}_b", 
-    "var3": "${var4}_c",
-    "var4": "${var1}_d"  # Creates circular reference var1 -> var2 -> var3 -> var4 -> var1
-}
+renderer = varmgr.get_renderer(scope_name="scope_stack")
+# raises TemplateRenderingCircularValueError
+renderer.render_var("var1")
 ```
 
-#### 2. Undefined Variables
-
-Attempting to use undefined variables will raise an error:
-
-```python
-# This will raise UndefinedVarError
-config = {
-    "bad_ref": "${nonexistent_var}"  # Reference to undefined variable
-}
-
-# Using the error handler
-varmgr.get_value("bad_ref", on_undefined_error="<UNDEFINED>")  # Returns "<UNDEFINED>"
-```
-
-#### 3. Malformed Templates
-
-The system handles various malformed template cases:
+### 2. Undefined Variables
 
 ```python
 config = {
-    # Missing closing brace - returned as-is
-    "unclosed": "${var_without_closing",  # Returned unchanged
-    
-    # Invalid nested templates - processed as-is
-    "invalid_nested": "${var${var}}",  # Returned unchanged
-    
-    # Extra closing braces - processed normally
-    "extra_braces": "${var}}}",  # Extra braces preserved
-    
-    # Escaped dollar signs
-    "escaped": "$$not_a_template",  # Double $ preserved
-    "mixed": "$$literal_${var}_$$another"  # Combines escaped and template
+    "bad_ref": "${nonexistent_var}",
 }
+
+varmgr.set_layer("stack_env", config)
+renderer = varmgr.get_renderer(scope_name="scope_stack")
+
+# Default: raises UndefinedVarError
+renderer.render_var("bad_ref")
+
+# Custom handler via render_var settings
+renderer.render_var("bad_ref", on_undefined_error="<UNDEFINED>")
 ```
 
+### 3. Malformed Templates
 
+Expandvars is generally lenient: unclosed braces and similar cases are often returned unchanged. Escaped dollars use `$$` (see tests for exact behavior with the fork).
+
+
+## Running tests
+
+From the `varmgr` directory (with expandvars develop available):
+
+```bash
+./run_tests.sh
+# or
+pytest tests/
+```
